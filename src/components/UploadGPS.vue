@@ -59,9 +59,6 @@ const encoder = new TextEncoder();
 
 export default {
   name: 'UploadGPS',
-  props: {
-    msg: String
-  },
   data() {
     return {
       name: '',
@@ -70,8 +67,9 @@ export default {
       device: null,
       opened: false,
       isWindows: false,
-      downloadProgress: 0,
+      downloadProgress: 0, // a download takes around 43 seconds
       responseCallback: {},
+      data: '',
     }
   },
   mounted() {
@@ -133,18 +131,8 @@ export default {
           });
 
           await this.device.claimInterface(0);
-
-          // TODO: do i need to send request or does data just come in?
-          /*const command = '$PMTK182,2,8*33\r\n'
-          const sent = await this.device.transferOut(1, encoder.encode(command))
-          console.log('sent', sent)
-          */
-
-
-
-          console.log('reading data');
+          console.log('starting serial stream');
           var buffer = '';
-
           for (;;) {
             let res = await this.device.transferIn(1, 64);
             if (res.status === 'babble') {
@@ -163,24 +151,35 @@ export default {
                 var line = buffer.slice(0, i);
                 buffer = buffer.slice(i + 2);
                 if (!line.startsWith('$GP')) {
-
-                  // starting with $PMTK001 are ACK for commands
-                  // starting with $PMTK182,3,6 are answers for setting queries
-                  if (line.startsWith('$PMTK182,3,')) {
+                  if (line.startsWith('$PMTK001')) {
+                    if (this.responseCallback[line] !== undefined) {
+                      this.responseCallback[line]();
+                    }
+                    console.log('ACK:', line);
+                    continue;
+                  } else if (line.startsWith('$PMTK182,8,')) { // receiving log data
+                    let p = '$PMTK182,8,';
+                    if (this.responseCallback[p] !== undefined) {
+                      let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                      this.responseCallback[p](payload);
+                      continue;
+                    }
+                  } else if (line.startsWith('$PMTK182,3,')) { // starting with $PMTK182,3,6 are answers for setting queries
                     let p = line.split(',').slice(0, 3).join(',');
                     if (this.responseCallback[p] !== undefined) {
                       let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
                       this.responseCallback[p](payload);
+                      continue;
                     }
-                  } else if (line.startsWith('$PMTK')) {
-                    // handling other responses
+                  } else if (line.startsWith('$PMTK')) { // handling other responses
                     let p = line.split(',')[0];
                     if (this.responseCallback[p] !== undefined) {
                       let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
                       this.responseCallback[p](payload);
+                      continue;
                     }
                   }
-                  console.log('found a line:', line);
+                  console.log('found line:', line);
                 }
               } else {
                 break;
@@ -217,8 +216,12 @@ export default {
     },
     clearLog(e) {
       e.target.blur();
-      // reference implementation https://github.com/kiah2008/androidmtk/blob/master/src/com/androidmtk/DeleteRunnable.java#L31
-
+      // TODO: this takes some time: better block UI
+      this.responseCallback['$PMTK001,182,6,3*21'] = (payload) => {
+        console.log('Erase complete');
+      }
+      var command = '$PMTK182,6,1*3E\r\n';
+      this.device.transferOut(1, encoder.encode(command))
     },
     downloadData(e) {
       e.target.blur();
@@ -234,7 +237,7 @@ export default {
           }
           // Query recording mode: 1=overwrite and flash is full, 2=stop
           var command = '$PMTK182,2,6*3D\r\n';
-          var res = await this.device.transferOut(1, encoder.encode(command))
+          await this.device.transferOut(1, encoder.encode(command))
 
           this.responseCallback['$PMTK182,3,8'] = (payload) => {
             console.log('memory used:', payload) //(%08x)
@@ -242,11 +245,31 @@ export default {
           // Query the RCD_ADDR (data log Next Write Address).
           // TODO: should memory used not return the full memory used in overwrite?
           command = '$PMTK182,2,8*33\r\n';
-          res = await this.device.transferOut(1, encoder.encode(command))
+          await this.device.transferOut(1, encoder.encode(command))
 
 
+          // requesting data
+          var offset = 0;
+          var size = 1024;
+          var chunkSize = 65536;
+          // callback for when chunks arrive
+          this.responseCallback['$PMTK182,8,'] = (payload) => {
+            console.log('received data:', payload);
+            //var startAddress = payload.split(',')[0];
+            var data = payload.split(',')[1];
+            this.data = this.data + data;
+          }
+          // ACK when download is finished
+          this.responseCallback['$PMTK001,182,7,3*20'] = () => {
+            console.log('finished download', this.data.length);
+            console.timeEnd();
+            window.data = this.data;
+          }
 
-
+          command = `$PMTK182,7,${number2hex(offset)},${number2hex(flashSize)}`;
+          command = AddNMEAChecksum(command) + '\r\n';
+          this.device.transferOut(1, encoder.encode(command));
+          console.time();
         } catch(e) {
           console.error(e);
         }
@@ -264,8 +287,8 @@ export default {
   }
 }
 
-// NEMAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
-function NMEAChecksum(cmd) {
+// AddNMEAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
+function AddNMEAChecksum(cmd) {
   if (cmd.charAt(0) === '$') {
     cmd = cmd.slice(1);
   }
@@ -286,6 +309,11 @@ function NMEAChecksum(cmd) {
 
 function fixPMTKMacAddress(mac) {
   return mac.match(/.{1,2}/g).reverse().join(':');
+}
+
+function number2hex(number) {
+  var hex = number.toString(16);
+  return ("00000000" + hex).slice(-8);
 }
 
 </script>
