@@ -1,17 +1,18 @@
 <template>
   <div id="app">
-    <img src="./assets/logo.png">
-    <HelloWorld msg="Welcome to Your Vue.js App"/>
+    <img src="/img/logo.png">
+    <UploadGPS/>
+    <!-- footer https://skunksports.com/ -->
   </div>
 </template>
 
 <script>
-import HelloWorld from './components/HelloWorld.vue'
+import UploadGPS from './components/UploadGPS.vue'
 
 export default {
   name: 'app',
   components: {
-    HelloWorld
+    UploadGPS
   }
 }
 </script>
@@ -23,6 +24,8 @@ export default {
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
   color: #2c3e50;
-  margin-top: 60px;
+  margin-top: 20px;
+  max-width: 600px;
+  margin: auto;
 }
 </style>
