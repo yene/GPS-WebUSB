@@ -9,9 +9,23 @@
     <template v-else-if="device !== null">
       <p>Connected with GPS Tracker</p>
       <br>
-      <button class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
+      <button class="button is-link is-outlined" v-on:click="startListening">Start Listening</button>
       <br><br>
-      <button class="button is-link is-outlined" v-on:click="liveUpdate">Live Update</button>
+      <div class="control">
+        <input class="input" v-model="name" type="text" placeholder="Device Name">
+      </div>
+      <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
+      <progress v-else class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
+      <br><br>
+      <button class="button is-link is-outlined" v-on:click="getFirmware">Get Firmware</button>
+      <br><br>
+      <button class="button is-link is-outlined" v-on:click="getNMEASettings">Get NMEA Settings</button>
+      <br><br>
+      <button class="button is-link is-outlined" v-on:click="getUpdateRate">Get Update Rate</button>
+      <br><br>
+      <button class="button is-link is-outlined" v-on:click="clearLog">Clear Log</button>
+      <br><br>
+      <button class="button is-link is-outlined">Upload data to firebase</button>
       <br><br>
       <button class="button is-link is-outlined" v-on:click="requestDevice">Connect different device</button>
     </template>
@@ -38,6 +52,10 @@
 const vendorId = 0x0e8d;
 const productId = 0x3329;
 const interfaceNumber = 0;
+const flashSize = 4 * 1024 * 1024; // 4 Mb or 200,000 records
+const SIZEOF_CHUNK = 0x0800; // 2048
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
 
 export default {
   name: 'UploadGPS',
@@ -46,11 +64,14 @@ export default {
   },
   data() {
     return {
+      name: '',
       isConnected: false,
       wrongBrowser: false,
       device: null,
       opened: false,
       isWindows: false,
+      downloadProgress: 0,
+      responseCallback: {},
     }
   },
   mounted() {
@@ -81,7 +102,7 @@ export default {
       this.device = null;
     });
 
-    // polling opened because it is not observable
+    // polling "device.opened" because it is not observable
     setInterval(() => {
       if (this.device !== null) {
         this.opened = this.device.opened;
@@ -89,8 +110,9 @@ export default {
     }, 1000)
   },
   methods: {
-    liveUpdate(e) {
+    startListening(e) {
       e.target.blur();
+      e.target.disabled = true;
       (async () => {
         try {
           await this.device.open();
@@ -99,126 +121,136 @@ export default {
           }
           await this.device.claimInterface(1);
 
-          //await this.device.selectAlternateInterface(1, 0);
-
-          // TODO: where do these values come from
+          // Sending a setup packet to the device.
+          // Note: The GPS Tracker should always send with baud 115200
+          // Why: We send setup packet on interface 1 and get data on interface 0?
           let result = await this.device.controlTransferOut({
             requestType: 'class',
             recipient: 'interface',
-            request: 0x22, // vendor-specific request: enable channels
-            value: 0x13, // 0b00010011 (channels 1, 2 and 5)
-            index: 0x01 // Interface 1 is the recipient
-          })
+            request: 0x22,
+            value: 0x13,
+            index: 0x01 // interface number
+          });
 
           await this.device.claimInterface(0);
-          console.log('open port on interface 1', result)
-            const command = '$PMTK182,2,8*33\r\n'
 
-          const enc = new TextEncoder()
-
-          const sent = await this.device.transferOut(1, enc.encode(command))
+          // TODO: do i need to send request or does data just come in?
+          /*const command = '$PMTK182,2,8*33\r\n'
+          const sent = await this.device.transferOut(1, encoder.encode(command))
           console.log('sent', sent)
-          const decoder = new TextDecoder()
-          while(true) {
-            let res = await this.device.transferIn(1, 1024)
-            console.log(decoder.decode(res.data))
+          */
+
+
+
+          console.log('reading data');
+          var buffer = '';
+
+          for (;;) {
+            let res = await this.device.transferIn(1, 64);
+            if (res.status === 'babble') {
+              console.warn('device responds with more packets than expected');
+            }
+            if (res.status === 'stall') {
+              console.warn('Endpoint stalled. Clearing.');
+              await this.device.clearHalt(1);
+              break; // TOOD: return
+            }
+            buffer = buffer + decoder.decode(res.data);
+            for (;;) {
+              // search buffer for end-of-line characters
+              var i = buffer.indexOf('\r\n');
+              if (i > -1) {
+                var line = buffer.slice(0, i);
+                buffer = buffer.slice(i + 2);
+                if (!line.startsWith('$GP')) {
+
+                  // starting with $PMTK001 are ACK for commands
+                  // starting with $PMTK182,3,6 are answers for setting queries
+                  if (line.startsWith('$PMTK182,3,')) {
+                    let p = line.split(',').slice(0, 3).join(',');
+                    if (this.responseCallback[p] !== undefined) {
+                      let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                      this.responseCallback[p](payload);
+                    }
+                  } else if (line.startsWith('$PMTK')) {
+                    // handling other responses
+                    let p = line.split(',')[0];
+                    if (this.responseCallback[p] !== undefined) {
+                      let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                      this.responseCallback[p](payload);
+                    }
+                  }
+                  console.log('found a line:', line);
+                }
+              } else {
+                break;
+              }
+            }
           }
-
-/*
-          console.log('waiting for data');
-while (true) {
-  let result = await this.device.transferIn(2, 8); // 2^12
-
-  if (result.data) {
-    console.log(result.data, result.status)
-    var enc = new TextDecoder();
-    console.log(enc.decode(result.data));
-  }
-
-  if (result.status === 'stall') {
-    console.warn('Endpoint stalled. Clearing.');
-    await window.device.clearHalt(1);
-  }
-}*/
-
 
         } catch(e) {
           console.error(e);
         }
       })();
     },
+    getFirmware(e) {
+      // Note: it is possible to get the flash product out of the string https://github.com/kiah2008/androidmtk/blob/master/src/com/androidmtk/DownloadBinRunnable.java#L227
+      this.responseCallback['$PMTK705'] = (payload) => {
+        alert('Firmware Version: ' + payload);
+      }
+      var command = '$PMTK605*31\r\n';
+      this.device.transferOut(1, encoder.encode(command))
+    },
+    getNMEASettings(e) {
+      this.responseCallback['$PMTK514'] = (payload) => {
+        alert('NMEA Settings: ' + payload);
+      }
+      var command = '$PMTK414*33\r\n';
+      this.device.transferOut(1, encoder.encode(command))
+    },
+    getUpdateRate(e) {
+      this.responseCallback['$PMTK500'] = (payload) => {
+        alert('Update Rate: ' + payload);
+      }
+      var command = '$PMTK400*36\r\n';
+      this.device.transferOut(1, encoder.encode(command))
+    },
+    clearLog(e) {
+      e.target.blur();
+      // reference implementation https://github.com/kiah2008/androidmtk/blob/master/src/com/androidmtk/DeleteRunnable.java#L31
+
+    },
     downloadData(e) {
       e.target.blur();
+      this.responseCallback['$PMTK592'] = (payload) => {
+        console.log('Mac address: ' + fixPMTKMacAddress(payload));
+      }
+      var command = '$PMTK492*3D\r\n';
+      this.device.transferOut(1, encoder.encode(command));
       (async () => {
         try {
-          await this.device.open();
-          if (this.device.configuration === null) {
-            await this.device.selectConfiguration(1);
+          this.responseCallback['$PMTK182,3,6'] = (payload) => {
+            console.log('recording mode:', payload === '1' ? 'overwrite' : 'stop');
           }
-          await this.device.claimInterface(0);
+          // Query recording mode: 1=overwrite and flash is full, 2=stop
+          var command = '$PMTK182,2,6*3D\r\n';
+          var res = await this.device.transferOut(1, encoder.encode(command))
 
-          await this.device.selectAlternateInterface(0, 0);
-
-          //let buf = new Uint8Array(1);
-          // $PMTK492*3D\r\n
-
-          //buf[0] = 0x30;
-          // $PMTK492*3D\r\n
-          var queryUpdateRate = '$PMTK400*36\r\n\0'
-          // 24504d544b3430302a3336 0d 0a 00
-          var buf = Buffer.from(queryUpdateRate, 'ascii');
-          console.log('query update rate', buf.toString('hex'));
-
-          var res2 = await this.device.transferOut(1, buf);
-          //console.log('did send and receive', res2);
-
-          console.log('waiting for 19 bytes on endpoint 1')
-          var res = await this.device.transferIn(1, 19);
-          console.log('got data', res);
-
-          var sizeBuff = res.data;
-          var size = sizeBuff.getUint32(0);
-          console.log("size = " + size);
-
-          var bToRead = size;
-
-          if ((bToRead % 64) != 0) {
-            bToRead++;	// <-- Needed otherwise some data is lost (might be a bug in firmware, unlikely though)
+          this.responseCallback['$PMTK182,3,8'] = (payload) => {
+            console.log('memory used:', payload) //(%08x)
           }
+          // Query the RCD_ADDR (data log Next Write Address).
+          // TODO: should memory used not return the full memory used in overwrite?
+          command = '$PMTK182,2,8*33\r\n';
+          res = await this.device.transferOut(1, encoder.encode(command))
 
-          var datas = await this.device.transferIn(1, bToRead);
-          console.log(datas);
+
+
 
         } catch(e) {
           console.error(e);
         }
       })();
-
-      /*
-      this.device.open()
-      .then(() => {
-        return this.device.selectConfiguration(1)
-      })
-      .then(() => {
-        return this.device.claimInterface(interfaceNumber)
-      })
-      /*
-      .then(() => this.device.controlTransferOut({
-          requestType: 'class',
-          recipient: 'interface',
-          request: 0x22,
-          value: 0x01,
-          index: 0x02})) // Ready to receive data
-      .then(() => this.device.transferIn(5, 64)) // Waiting for 64 bytes of data from endpoint #5.
-      .then(result => {
-        let decoder = new TextDecoder();
-        console.log('Received: ' + decoder.decode(result.data));
-      })
-      .then(result => {
-        //return this.device.close();
-      })
-      .catch(error => { console.log(error); });
-      */
     },
     requestDevice(e) {
       e.target.blur();
@@ -232,9 +264,28 @@ while (true) {
   }
 }
 
-// buf2hex converts an ArrayBuffer to a hex string
-function buf2hex(buffer) {
-  return Array.prototype.map.call(new Uint8Array(buffer), x => ('00' + x.toString(16)).slice(-2)).join('');
+// NEMAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
+function NMEAChecksum(cmd) {
+  if (cmd.charAt(0) === '$') {
+    cmd = cmd.slice(1);
+  }
+
+  // Compute the checksum by XORing all the character values in the string.
+  var checksum = 0;
+  for (var i = 0; i < cmd.length; i++) {
+    checksum = checksum ^ cmd.charCodeAt(i);
+  }
+
+  // Convert it to hexadecimal (base-16, upper case, most significant nybble first).
+  var hexsum = Number(checksum).toString(16).toUpperCase();
+  if (hexsum.length < 2) {
+    hexsum = ('00' + hexsum).slice(-2);
+  }
+  return '$' + cmd + '*' + hexsum;
+}
+
+function fixPMTKMacAddress(mac) {
+  return mac.match(/.{1,2}/g).reverse().join(':');
 }
 
 </script>
