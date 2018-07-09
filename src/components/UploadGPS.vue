@@ -11,9 +11,6 @@
       <br>
       <button class="button is-link is-outlined" v-on:click="startListening">Start Listening</button>
       <br><br>
-      <div class="control">
-        <input class="input" v-model="name" type="text" placeholder="Device Name">
-      </div>
       <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
       <progress v-else class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
       <br><br>
@@ -23,9 +20,7 @@
       <br><br>
       <button class="button is-link is-outlined" v-on:click="getUpdateRate">Get Update Rate</button>
       <br><br>
-      <button class="button is-link is-outlined" v-on:click="clearLog">Clear Log</button>
-      <br><br>
-      <button class="button is-link is-outlined">Upload data to firebase</button>
+      <button class="button is-link is-outlined" v-on:click="clearLog">Reset Tracker</button>
       <br><br>
       <button class="button is-link is-outlined" v-on:click="requestDevice">Connect different device</button>
     </template>
@@ -61,7 +56,6 @@ export default {
   name: 'UploadGPS',
   data() {
     return {
-      name: '',
       isConnected: false,
       wrongBrowser: false,
       device: null,
@@ -254,15 +248,21 @@ export default {
           var chunkSize = 65536;
           // callback for when chunks arrive
           this.responseCallback['$PMTK182,8,'] = (payload) => {
-            console.log('received data:', payload);
-            //var startAddress = payload.split(',')[0];
-            var data = payload.split(',')[1];
+            var p = payload.split(',');
+            if (p.length !== 2) {
+              return;
+            }
+            var startAddress = p[0];
+            var data = p[1];
+            console.log('received data from:', startAddress);
             this.data = this.data + data;
           }
           // ACK when download is finished
           this.responseCallback['$PMTK001,182,7,3*20'] = () => {
             console.log('finished download', this.data.length);
             console.timeEnd();
+            var end = 'AAAAAAAAAAA0700010000BBBBBBBB';
+            downloadData(this.data.slice(0, this.data.lastIndexOf(end) + end.length));
             window.data = this.data;
           }
 
@@ -305,6 +305,16 @@ function AddNMEAChecksum(cmd) {
     hexsum = ('00' + hexsum).slice(-2);
   }
   return '$' + cmd + '*' + hexsum;
+}
+
+function downloadData(data) {
+  const a = document.createElement('a')
+  const body = document.getElementById('app')
+  body.appendChild(a)
+  const file = new Blob([data], { type: 'text/plain' })
+  a.href = URL.createObjectURL(file)
+  a.download = 'tracker_data.hex'
+  a.click()
 }
 
 function fixPMTKMacAddress(mac) {
