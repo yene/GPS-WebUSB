@@ -13,6 +13,15 @@ export default {
   name: 'app',
   components: {
     UploadGPS
+  },
+  mounted() {
+    if (location.host.includes('localhost')) {
+      return;
+    }
+    if (location.protocol === 'http:') {
+      window.location = 'https://' + location.host + location.pathname;
+    }
+
   }
 }
 </script>
