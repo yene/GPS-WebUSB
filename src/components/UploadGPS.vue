@@ -8,8 +8,6 @@
     </template>
     <template v-else-if="device !== null">
       <p>Connected with GPS Tracker</p>
-      <br>
-      <button class="button is-link is-outlined" v-on:click="startListening">Start Listening</button>
       <br><br>
       <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
       <progress v-else class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
@@ -43,6 +41,7 @@
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /* eslint no-unused-vars: "off" */
 /* eslint no-constant-condition: "off" */
+/* eslint 'semi': ['warn', 'always'] */
 
 const vendorId = 0x0e8d;
 const productId = 0x3329;
@@ -64,7 +63,7 @@ export default {
       downloadProgress: 0, // a download takes around 43 seconds
       responseCallback: {},
       data: '',
-    }
+    };
   },
   mounted() {
     this.isWindows = navigator.platform.indexOf('Win') > -1;
@@ -83,11 +82,13 @@ export default {
         console.info('Found multiple GPS Tracker connected to this app, using the first one');
       }
       this.device = d[0];
-      window.device = this.device;
+      this.startListening();
+      window.device = this.device; // TODO: remove this debug line
     });
     navigator.usb.addEventListener('connect', event => {
       console.log('connect', event.device);
       this.device = event.device;
+      this.startListening();
     });
     navigator.usb.addEventListener('disconnect', event => {
       console.log('disconnect', event.device);
@@ -99,12 +100,15 @@ export default {
       if (this.device !== null) {
         this.opened = this.device.opened;
       }
-    }, 1000)
+    }, 1000);
   },
   methods: {
-    startListening(e) {
-      e.target.blur();
-      e.target.disabled = true;
+    startListening() {
+      if (this.opened) {
+        console.error('Device is already open');
+        return;
+      }
+
       (async () => {
         try {
           await this.device.open();
@@ -141,46 +145,44 @@ export default {
             for (;;) {
               // search buffer for end-of-line characters
               var i = buffer.indexOf('\r\n');
-              if (i > -1) {
-                var line = buffer.slice(0, i);
-                buffer = buffer.slice(i + 2);
-                if (!line.startsWith('$GP')) {
-                  if (line.startsWith('$PMTK001')) {
-                    if (this.responseCallback[line] !== undefined) {
-                      this.responseCallback[line]();
-                    }
-                    console.log('ACK:', line);
-                    continue;
-                  } else if (line.startsWith('$PMTK182,8,')) { // receiving log data
-                    let p = '$PMTK182,8,';
-                    if (this.responseCallback[p] !== undefined) {
-                      let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
-                      this.responseCallback[p](payload);
-                      continue;
-                    }
-                  } else if (line.startsWith('$PMTK182,3,')) { // starting with $PMTK182,3,6 are answers for setting queries
-                    let p = line.split(',').slice(0, 3).join(',');
-                    if (this.responseCallback[p] !== undefined) {
-                      let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
-                      this.responseCallback[p](payload);
-                      continue;
-                    }
-                  } else if (line.startsWith('$PMTK')) { // handling other responses
-                    let p = line.split(',')[0];
-                    if (this.responseCallback[p] !== undefined) {
-                      let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
-                      this.responseCallback[p](payload);
-                      continue;
-                    }
-                  }
-                  console.log('found line:', line);
-                }
-              } else {
+              if (i == -1) {
                 break;
+              }
+              var line = buffer.slice(0, i);
+              buffer = buffer.slice(i + 2);
+              if (!line.startsWith('$GP')) { // ignore live updates over serial
+                if (line.startsWith('$PMTK001')) {
+                  if (this.responseCallback[line] !== undefined) {
+                    this.responseCallback[line]();
+                  }
+                  console.log('ACK:', line);
+                  continue;
+                } else if (line.startsWith('$PMTK182,8,')) { // receiving log data
+                  let p = '$PMTK182,8,';
+                  if (this.responseCallback[p] !== undefined) {
+                    let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                    this.responseCallback[p](payload);
+                    continue;
+                  }
+                } else if (line.startsWith('$PMTK182,3,')) { // starting with $PMTK182,3,6 are answers for setting queries
+                  let p = line.split(',').slice(0, 3).join(',');
+                  if (this.responseCallback[p] !== undefined) {
+                    let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                    this.responseCallback[p](payload);
+                    continue;
+                  }
+                } else if (line.startsWith('$PMTK')) { // handling other responses
+                  let p = line.split(',')[0];
+                  if (this.responseCallback[p] !== undefined) {
+                    let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                    this.responseCallback[p](payload);
+                    continue;
+                  }
+                }
+                console.log('found line:', line);
               }
             }
           }
-
         } catch(e) {
           console.error(e);
         }
@@ -190,56 +192,56 @@ export default {
       // Note: it is possible to get the flash product out of the string https://github.com/kiah2008/androidmtk/blob/master/src/com/androidmtk/DownloadBinRunnable.java#L227
       this.responseCallback['$PMTK705'] = (payload) => {
         alert('Firmware Version: ' + payload);
-      }
+      };
       var command = '$PMTK605*31\r\n';
-      this.device.transferOut(1, encoder.encode(command))
+      this.device.transferOut(1, encoder.encode(command));
     },
     getNMEASettings(e) {
       this.responseCallback['$PMTK514'] = (payload) => {
         alert('NMEA Settings: ' + payload);
-      }
+      };
       var command = '$PMTK414*33\r\n';
-      this.device.transferOut(1, encoder.encode(command))
+      this.device.transferOut(1, encoder.encode(command));
     },
     getUpdateRate(e) {
       this.responseCallback['$PMTK500'] = (payload) => {
         alert('Update Rate: ' + payload);
-      }
+      };
       var command = '$PMTK400*36\r\n';
-      this.device.transferOut(1, encoder.encode(command))
+      this.device.transferOut(1, encoder.encode(command));
     },
     clearLog(e) {
       e.target.blur();
       // TODO: this takes some time: better block UI
       this.responseCallback['$PMTK001,182,6,3*21'] = (payload) => {
         console.log('Erase complete');
-      }
+      };
       var command = '$PMTK182,6,1*3E\r\n';
-      this.device.transferOut(1, encoder.encode(command))
+      this.device.transferOut(1, encoder.encode(command));
     },
     downloadData(e) {
       e.target.blur();
       this.responseCallback['$PMTK592'] = (payload) => {
         console.log('Mac address: ' + fixPMTKMacAddress(payload));
-      }
+      };
       var command = '$PMTK492*3D\r\n';
       this.device.transferOut(1, encoder.encode(command));
       (async () => {
         try {
           this.responseCallback['$PMTK182,3,6'] = (payload) => {
             console.log('recording mode:', payload === '1' ? 'overwrite' : 'stop');
-          }
+          };
           // Query recording mode: 1=overwrite and flash is full, 2=stop
           var command = '$PMTK182,2,6*3D\r\n';
-          await this.device.transferOut(1, encoder.encode(command))
+          await this.device.transferOut(1, encoder.encode(command));
 
           this.responseCallback['$PMTK182,3,8'] = (payload) => {
-            console.log('memory used:', payload) //(%08x)
-          }
+            console.log('memory used:', payload); //(%08x)
+          };
           // Query the RCD_ADDR (data log Next Write Address).
           // TODO: should memory used not return the full memory used in overwrite?
           command = '$PMTK182,2,8*33\r\n';
-          await this.device.transferOut(1, encoder.encode(command))
+          await this.device.transferOut(1, encoder.encode(command));
 
 
           // requesting data
@@ -256,15 +258,15 @@ export default {
             var data = p[1];
             console.log('received data from:', startAddress);
             this.data = this.data + data;
-          }
+          };
           // ACK when download is finished
           this.responseCallback['$PMTK001,182,7,3*20'] = () => {
             console.log('finished download', this.data.length);
             console.timeEnd();
             var end = 'AAAAAAAAAAA0700010000BBBBBBBB';
             downloadData(this.data.slice(0, this.data.lastIndexOf(end) + end.length));
-            window.data = this.data;
-          }
+            window.data = this.data; // TODO: remove this debug line
+          };
 
           command = `$PMTK182,7,${number2hex(offset)},${number2hex(flashSize)}`;
           command = AddNMEAChecksum(command) + '\r\n';
@@ -280,12 +282,13 @@ export default {
       navigator.usb.requestDevice({ filters: [{ vendorId: vendorId }] })
       .then(selectedDevice => {
         this.device = selectedDevice;
-        window.device = this.device;
+        this.startListening();
+        window.device = this.device; // TODO: remove this debug line
       })
       .catch(error => { console.log(error); });
     }
   }
-}
+};
 
 // AddNMEAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
 function AddNMEAChecksum(cmd) {
@@ -308,13 +311,13 @@ function AddNMEAChecksum(cmd) {
 }
 
 function downloadData(data) {
-  const a = document.createElement('a')
-  const body = document.getElementById('app')
-  body.appendChild(a)
-  const file = new Blob([data], { type: 'text/plain' })
-  a.href = URL.createObjectURL(file)
-  a.download = 'tracker_data.hex'
-  a.click()
+  const a = document.createElement('a');
+  const body = document.getElementById('app');
+  body.appendChild(a);
+  const file = new Blob([data], { type: 'text/plain' });
+  a.href = URL.createObjectURL(file);
+  a.download = 'tracker_data.hex';
+  a.click();
 }
 
 function fixPMTKMacAddress(mac) {
