@@ -8,10 +8,12 @@
     </template>
     <template v-else-if="device !== null">
       <p>Connected with GPS Tracker</p>
-      <br><br>
+      <br>
       <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
       <progress v-else class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
       <br><br>
+            <button class="button is-link is-outlined" v-on:click="getFirmware">Get Firmware</button>
+
       <button class="button is-link is-outlined" v-on:click="getFirmware">Get Firmware</button>
       <br><br>
       <button class="button is-link is-outlined" v-on:click="getNMEASettings">Get NMEA Settings</button>
@@ -50,6 +52,9 @@ const flashSize = 4 * 1024 * 1024; // 4 Mb or 200,000 records
 const SIZEOF_CHUNK = 0x0800; // 2048
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+const guessedDownloadTime = 42 * 1000;
+
+const chunkSizeToRequest = 0x800; // 2048
 
 export default {
   name: 'UploadGPS',
@@ -60,7 +65,7 @@ export default {
       device: null,
       opened: false,
       isWindows: false,
-      downloadProgress: 0, // a download takes around 43 seconds
+      downloadProgress: 0,
       responseCallback: {},
       data: '',
     };
@@ -138,7 +143,7 @@ export default {
             }
             if (res.status === 'stall') {
               console.warn('Endpoint stalled. Clearing.');
-              await this.device.clearHalt(1);
+              await this.device.clearHalt('in', 1);
               break; // TOOD: return
             }
             buffer = buffer + decoder.decode(res.data);
@@ -221,6 +226,15 @@ export default {
     },
     downloadData(e) {
       e.target.blur();
+      this.downloadProgress = 1;
+      this.timer = setInterval(() => {
+        this.downloadProgress = this.downloadProgress + 1;
+        if (this.downloadProgress === 100) {
+          clearInterval(this.timer);
+          this.downloadProgress = -1;
+        }
+      }, guessedDownloadTime/100);
+
       this.responseCallback['$PMTK592'] = (payload) => {
         console.log('Mac address: ' + fixPMTKMacAddress(payload));
       };
@@ -311,13 +325,18 @@ function AddNMEAChecksum(cmd) {
 }
 
 function downloadData(data) {
-  const a = document.createElement('a');
-  const body = document.getElementById('app');
+  var a = document.createElement('a');
+  var body = document.getElementById('app');
   body.appendChild(a);
-  const file = new Blob([data], { type: 'text/plain' });
-  a.href = URL.createObjectURL(file);
+  var file = new Blob([data], { type: 'text/plain' });
+  var url = URL.createObjectURL(file);
+  a.href = url;
   a.download = 'tracker_data.hex';
   a.click();
+  setTimeout(function() {
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }, 0);
 }
 
 function fixPMTKMacAddress(mac) {
@@ -333,6 +352,15 @@ function number2hex(number) {
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
+
+.gps {
+  padding-left: 40px;
+  padding-right: 40px;
+}
+
+progress {
+  margin: 0;
+}
 
 .status-text {
   position: fixed;
