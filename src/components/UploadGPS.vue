@@ -12,8 +12,6 @@
       <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
       <progress v-else class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
       <br><br>
-            <button class="button is-link is-outlined" v-on:click="getFirmware">Get Firmware</button>
-
       <button class="button is-link is-outlined" v-on:click="getFirmware">Get Firmware</button>
       <br><br>
       <button class="button is-link is-outlined" v-on:click="getNMEASettings">Get NMEA Settings</button>
@@ -44,6 +42,8 @@
 /* eslint no-unused-vars: "off" */
 /* eslint no-constant-condition: "off" */
 /* eslint 'semi': ['warn', 'always'] */
+
+import * as utils from '@/utils/utils.js';
 
 const vendorId = 0x0e8d;
 const productId = 0x3329;
@@ -236,7 +236,7 @@ export default {
       }, guessedDownloadTime/100);
 
       this.responseCallback['$PMTK592'] = (payload) => {
-        console.log('Mac address: ' + fixPMTKMacAddress(payload));
+        console.log('Mac address: ' + utils.fixPMTKMacAddress(payload));
       };
       var command = '$PMTK492*3D\r\n';
       this.device.transferOut(1, encoder.encode(command));
@@ -278,12 +278,12 @@ export default {
             console.log('finished download', this.data.length);
             console.timeEnd();
             var end = 'AAAAAAAAAAA0700010000BBBBBBBB';
-            downloadData(this.data.slice(0, this.data.lastIndexOf(end) + end.length));
+            utils.downloadData(this.data.slice(0, this.data.lastIndexOf(end) + end.length), 'tracker_data.hex', 'text/plain');
             window.data = this.data; // TODO: remove this debug line
           };
 
-          command = `$PMTK182,7,${number2hex(offset)},${number2hex(flashSize)}`;
-          command = AddNMEAChecksum(command) + '\r\n';
+          command = `$PMTK182,7,${utils.number2hex(offset)},${utils.number2hex(flashSize)}`;
+          command = utils.addNMEAChecksum(command) + '\r\n';
           this.device.transferOut(1, encoder.encode(command));
           console.time();
         } catch(e) {
@@ -303,50 +303,6 @@ export default {
     }
   }
 };
-
-// AddNMEAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
-function AddNMEAChecksum(cmd) {
-  if (cmd.charAt(0) === '$') {
-    cmd = cmd.slice(1);
-  }
-
-  // Compute the checksum by XORing all the character values in the string.
-  var checksum = 0;
-  for (var i = 0; i < cmd.length; i++) {
-    checksum = checksum ^ cmd.charCodeAt(i);
-  }
-
-  // Convert it to hexadecimal (base-16, upper case, most significant nybble first).
-  var hexsum = Number(checksum).toString(16).toUpperCase();
-  if (hexsum.length < 2) {
-    hexsum = ('00' + hexsum).slice(-2);
-  }
-  return '$' + cmd + '*' + hexsum;
-}
-
-function downloadData(data) {
-  var a = document.createElement('a');
-  var body = document.getElementById('app');
-  body.appendChild(a);
-  var file = new Blob([data], { type: 'text/plain' });
-  var url = URL.createObjectURL(file);
-  a.href = url;
-  a.download = 'tracker_data.hex';
-  a.click();
-  setTimeout(function() {
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  }, 0);
-}
-
-function fixPMTKMacAddress(mac) {
-  return mac.match(/.{1,2}/g).reverse().join(':');
-}
-
-function number2hex(number) {
-  var hex = number.toString(16);
-  return ("00000000" + hex).slice(-8);
-}
 
 </script>
 
