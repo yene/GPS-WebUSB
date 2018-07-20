@@ -9,8 +9,14 @@
     <template v-else-if="device !== null">
       <p>Connected with GPS Tracker</p>
       <br>
-      <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadData">Download Data</button>
-      <progress v-else class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
+      <button v-if="downloadProgress === 0" class="button is-link is-outlined" v-on:click="downloadLog">Download Log</button>
+      <template v-else>
+      <progress class="progress is-info" :value="downloadProgress" max="100">{{downloadProgress}}%</progress>
+      <!-- <button class="button is-link is-outlined" v-on:click="killDownload">Stop Download</button> -->
+      </template>
+      <br><br>
+      <button class="button is-link is-outlined" v-on:click="mtkLogger">use mtk_logger</button>
+
       <br><br>
       <button class="button is-link is-outlined" v-on:click="getFirmware">Get Firmware</button>
       <br><br>
@@ -19,6 +25,7 @@
       <button class="button is-link is-outlined" v-on:click="getUpdateRate">Get Update Rate</button>
       <br><br>
       <button class="button is-link is-outlined" v-on:click="clearLog">Reset Tracker</button>
+
       <br><br>
       <button class="button is-link is-outlined" v-on:click="requestDevice">Connect different device</button>
     </template>
@@ -44,12 +51,12 @@
 /* eslint 'semi': ['warn', 'always'] */
 
 import * as utils from '@/utils/utils.js';
+import MTKLogger from '@/utils/MTKLogger.js';
 
 const vendorId = 0x0e8d;
 const productId = 0x3329;
 const interfaceNumber = 0;
 const flashSize = 4 * 1024 * 1024; // 4 Mb or 200,000 records
-const SIZEOF_CHUNK = 0x0800; // 2048
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const guessedDownloadTime = 42 * 1000;
@@ -108,6 +115,18 @@ export default {
     }, 1000);
   },
   methods: {
+    mtkLogger(e) {
+      var mtkLogger = new MTKLogger(this.device);
+      mtkLogger.mtk_rd_init();
+
+
+    },
+    killDownload(e) {
+      clearInterval(this.timer);
+      this.downloadProgress = -1;
+      this.device.clearHalt('in', 1);
+      this.device.clearHalt('out', 1);
+    },
     startListening() {
       if (this.opened) {
         console.error('Device is already open');
@@ -134,6 +153,7 @@ export default {
           });
 
           await this.device.claimInterface(0);
+         /*
           console.log('starting serial stream');
           var buffer = '';
           for (;;) {
@@ -155,39 +175,55 @@ export default {
               }
               var line = buffer.slice(0, i);
               buffer = buffer.slice(i + 2);
-              if (!line.startsWith('$GP')) { // ignore live updates over serial
-                if (line.startsWith('$PMTK001')) {
-                  if (this.responseCallback[line] !== undefined) {
-                    this.responseCallback[line]();
-                  }
-                  console.log('ACK:', line);
-                  continue;
-                } else if (line.startsWith('$PMTK182,8,')) { // receiving log data
-                  let p = '$PMTK182,8,';
-                  if (this.responseCallback[p] !== undefined) {
-                    let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
-                    this.responseCallback[p](payload);
-                    continue;
-                  }
-                } else if (line.startsWith('$PMTK182,3,')) { // starting with $PMTK182,3,6 are answers for setting queries
-                  let p = line.split(',').slice(0, 3).join(',');
-                  if (this.responseCallback[p] !== undefined) {
-                    let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
-                    this.responseCallback[p](payload);
-                    continue;
-                  }
-                } else if (line.startsWith('$PMTK')) { // handling other responses
-                  let p = line.split(',')[0];
-                  if (this.responseCallback[p] !== undefined) {
-                    let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
-                    this.responseCallback[p](payload);
-                    continue;
-                  }
-                }
-                console.log('found line:', line);
+
+              if (line.charAt(0) !== '$') {
+                console.info('Dropping line without $:', line);
+                continue;
               }
+
+              let payload = line.slice(1, line.lastIndexOf('*'));
+              var calculatedChecksum = utils.NMEAChecksum(payload);
+              var payloadChecksum = line.slice(line.lastIndexOf('*') + 1);
+              if (calculatedChecksum !== payloadChecksum) {
+                console.info('Invalid checksum found, dropping line', line);
+                console.info('i calculated checksum', calculatedChecksum, 'but it was', payloadChecksum);
+                //debugger;
+              }
+
+              if (line.startsWith('$GP')) { // ignore live updates over serial
+                continue;
+              }
+              if (line.startsWith('$PMTK001')) {
+                if (this.responseCallback[line] !== undefined) {
+                  this.responseCallback[line]();
+                }
+                console.log('ACK:', line);
+                continue;
+              } else if (line.startsWith('$PMTK182,8,')) { // receiving log data
+                let prefix = '$PMTK182,8,';
+                if (this.responseCallback[prefix] !== undefined) {
+                  let payload = line.slice(prefix.length, line.lastIndexOf('*'));
+                  this.responseCallback[prefix](payload);
+                  continue;
+                }
+              } else if (line.startsWith('$PMTK182,3,')) { // starting with $PMTK182,3,6 are answers for setting queries
+                let p = line.split(',').slice(0, 3).join(',');
+                if (this.responseCallback[p] !== undefined) {
+                  let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                  this.responseCallback[p](payload);
+                  continue;
+                }
+              } else if (line.startsWith('$PMTK')) { // handling other responses
+                let p = line.split(',')[0];
+                if (this.responseCallback[p] !== undefined) {
+                  let payload = line.slice(p.length + 1, line.lastIndexOf('*'));
+                  this.responseCallback[p](payload);
+                  continue;
+                }
+              }
+              console.log('found line:', line);
             }
-          }
+          }*/
         } catch(e) {
           console.error(e);
         }
@@ -224,7 +260,7 @@ export default {
       var command = '$PMTK182,6,1*3E\r\n';
       this.device.transferOut(1, encoder.encode(command));
     },
-    downloadData(e) {
+    downloadLog(e) {
       e.target.blur();
       this.downloadProgress = 1;
       this.timer = setInterval(() => {
@@ -282,7 +318,7 @@ export default {
             window.data = this.data; // TODO: remove this debug line
           };
 
-          command = `$PMTK182,7,${utils.number2hex(offset)},${utils.number2hex(flashSize)}`;
+          command = `$PMTK182,7,${utils.number2hex(offset)},${utils.number2hex(size*10)}`;
           command = command + '*' + utils.NMEAChecksum(command) + '\r\n';
           this.device.transferOut(1, encoder.encode(command));
           console.time();
