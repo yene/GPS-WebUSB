@@ -1,5 +1,5 @@
-// AddNMEAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
-export function addNMEAChecksum(cmd) {
+// NMEAChecksum taken from http://www.hhhh.org/wiml/proj/nmeaxor.html
+export function NMEAChecksum(cmd) {
   if (cmd.charAt(0) === '$') {
     cmd = cmd.slice(1);
   }
@@ -12,10 +12,7 @@ export function addNMEAChecksum(cmd) {
 
   // Convert it to hexadecimal (base-16, upper case, most significant nybble first).
   var hexsum = Number(checksum).toString(16).toUpperCase();
-  if (hexsum.length < 2) {
-    hexsum = ('00' + hexsum).slice(-2);
-  }
-  return '$' + cmd + '*' + hexsum;
+  return ('00' + hexsum).slice(-2);
 }
 
 export function downloadData(data, filename, type) {

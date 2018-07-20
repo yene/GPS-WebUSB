@@ -283,7 +283,7 @@ export default {
           };
 
           command = `$PMTK182,7,${utils.number2hex(offset)},${utils.number2hex(flashSize)}`;
-          command = utils.addNMEAChecksum(command) + '\r\n';
+          command = command + '*' + utils.NMEAChecksum(command) + '\r\n';
           this.device.transferOut(1, encoder.encode(command));
           console.time();
         } catch(e) {
