@@ -153,7 +153,7 @@ export default {
           });
 
           await this.device.claimInterface(0);
-         /*
+
           console.log('starting serial stream');
           var buffer = '';
           for (;;) {
@@ -197,7 +197,11 @@ export default {
                 if (this.responseCallback[line] !== undefined) {
                   this.responseCallback[line]();
                 }
-                console.log('ACK:', line);
+                if (line.split(',')[3] !== '3') {
+                  console.error('BAD ACK:', line)
+                } else {
+                  console.log('ACK:', line);
+                }
                 continue;
               } else if (line.startsWith('$PMTK182,8,')) { // receiving log data
                 let prefix = '$PMTK182,8,';
@@ -223,7 +227,7 @@ export default {
               }
               console.log('found line:', line);
             }
-          }*/
+          }
         } catch(e) {
           console.error(e);
         }
@@ -271,10 +275,14 @@ export default {
         }
       }, guessedDownloadTime/100);
 
+
+      var command = '$PMTK182,5*20\r\n'; // DISABLE LOG
+      this.device.transferOut(1, encoder.encode(command));
+
       this.responseCallback['$PMTK592'] = (payload) => {
         console.log('Mac address: ' + utils.fixPMTKMacAddress(payload));
       };
-      var command = '$PMTK492*3D\r\n';
+      command = '$PMTK492*3D\r\n';
       this.device.transferOut(1, encoder.encode(command));
       (async () => {
         try {
@@ -318,7 +326,7 @@ export default {
             window.data = this.data; // TODO: remove this debug line
           };
 
-          command = `$PMTK182,7,${utils.number2hex(offset)},${utils.number2hex(size*10)}`;
+          command = `$PMTK182,7,${utils.number2hex(offset)},${utils.number2hex(flashSize)}`;
           command = command + '*' + utils.NMEAChecksum(command) + '\r\n';
           this.device.transferOut(1, encoder.encode(command));
           console.time();
